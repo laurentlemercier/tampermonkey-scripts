@@ -14,6 +14,6 @@ Voir le guide : https://github.com/laurentlemercier/tampermonkey-scripts/blob/ma
 
 ## Scripts
 ### Script Ipeca
-Ce script permet de récupérer automatiquement ses dépenses de santé depuis le site Ipeca.
+Ce script permet de récupérer automatiquement ses dépenses de santé depuis le site Ipeca. Il ajoute un bouton "exporter vers excel" dans la page "Mes remboursements". Le bouton exporte les données selon la sélection faite par l'utilisateur.
 
 [![Installer le script](https://img.shields.io/badge/Installer-Tampermonkey-green.svg)](https://raw.githubusercontent.com/laurentlemercier/tampermonkey-scripts/main/ipeca.user.js)
