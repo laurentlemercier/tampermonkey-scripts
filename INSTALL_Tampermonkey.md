@@ -3,7 +3,7 @@ Le plus simple est de passer par le site officiel de l'outil.
 
 ## Étape 1 : Allez sur le site officiel
 Ouvrez votre navigateur internet (Chrome, Firefox, Edge, Safari, etc.).
-Rendez-vous sur le site : (http://tampermonkey.net)[http://tampermonkey.net].
+Rendez-vous sur le site : http://tampermonkey.net.
 
 ## Étape 2 : Choisir la version stable
 Sur la page d'accueil, vous verrez deux versions principales : stable / beta.
