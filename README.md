@@ -10,7 +10,7 @@ L'installation de tampermonkey est nécessaire en préalable. Elle est à réali
 Tous ces scripts sont sous licence GPL v3.
 
 ## Installation de tamperonkey
-Voir le (guide)[INSTALL_Tampermonkey.md]
+Voir le [guide](INSTALL_Tampermonkey.md)
 
 ## Scripts
 ### Script Ipeca
