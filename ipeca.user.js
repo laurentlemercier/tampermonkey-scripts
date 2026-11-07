@@ -1,43 +1,117 @@
 // ==UserScript==
 // @name         IPECA - Export Remboursements Excel
-// @namespace    http://tampermonkey.net/
-// @version      2.1
 // @description  Ajoute un bouton pour exporter les remboursements santé IPECA vers Excel
-// @author       Laurent+Claude
 // @match        https://www.ipeca.fr/mes-remboursements*
-// @grant        none
+// @match        https://www.ipeca.fr/ng/client/mes-remboursements*
+// @namespace    https://github.com/laurentlemercier/tampermonkey-scripts
+// @grant        GM_registerMenuCommand
+// @grant        GM_unregisterMenuCommand
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        unsafeWindow
+// @author       Laurent Lemercier et Claude AI
+// @version      3.3
 // @updateURL    https://raw.githubusercontent.com/laurentlemercier/tampermonkey-scripts/main/ipeca.user.js
 // @downloadURL  https://raw.githubusercontent.com/laurentlemercier/tampermonkey-scripts/main/ipeca.user.js
-// @license      GPL-3.0-only
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    const DEBUG = false; // ← passer à true pour activer les logs de diagnostic
+    const BTN_STYLE = 'padding:6px 14px;background:#1F4E79;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-family:Arial,sans-serif;vertical-align:middle;';
+    // ── Mode debug : activable/désactivable via le menu Tampermonkey ─────────
+    // (icône Tampermonkey → nom du script → "Debug"). Le choix est mémorisé.
+    const BOX_STYLE = 'display:inline-flex;align-items:center;gap:10px;vertical-align:middle;';
+    let DEBUG = false;
+    try { if (typeof GM_getValue === 'function') DEBUG = !!GM_getValue('debug', false); } catch (e) { /* ignore */ }
+
+    const W = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+    let debugMenuId = null;
+
+    function showToast(msg) {
+        if (!document.body) return;
+        const t = document.createElement('div');
+        t.textContent = msg;
+        t.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:100000;background:#1F4E79;color:#fff;' +
+            'padding:10px 16px;border-radius:6px;font:13px Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);';
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 3000);
+    }
+
+    function registerDebugMenu() {
+        if (typeof GM_registerMenuCommand !== 'function') return;
+        const canRefresh = typeof GM_unregisterMenuCommand === 'function';
+        if (debugMenuId !== null && canRefresh) {
+            try { GM_unregisterMenuCommand(debugMenuId); } catch (e) { /* ignore */ }
+        }
+        const label = canRefresh
+            ? (DEBUG ? '🐞 Debug : ACTIVÉ (cliquer pour désactiver)' : '🐞 Debug : désactivé (cliquer pour activer)')
+            : '🐞 Activer / désactiver le debug';
+        debugMenuId = GM_registerMenuCommand(label, toggleDebug);
+    }
+
+    function toggleDebug() {
+        DEBUG = !DEBUG;
+        try { if (typeof GM_setValue === 'function') GM_setValue('debug', DEBUG); } catch (e) { /* ignore */ }
+        console.log('[IPECA Export] Debug', DEBUG ? 'ACTIVÉ' : 'désactivé');
+        showToast('IPECA Export — debug ' + (DEBUG ? 'activé (logs dans la console F12)' : 'désactivé'));
+        if (typeof GM_unregisterMenuCommand === 'function') registerDebugMenu();
+    }
+
+    registerDebugMenu();
+    if (DEBUG) console.log('[IPECA Export] Script chargé, debug ACTIVÉ');
+
 
     // ── Injection du bouton ──────────────────────────────────────────────────
-    function injectButton() {
-        const pagination = document.querySelector('.wrapper-refund-sante .pagination');
-        if (!pagination || document.getElementById('ipeca-export-btn')) return;
+    function findHost() {
+        return document.querySelector('app-reimbursement-data-table .pagination')            // nouveau site
+            || document.querySelector('.wrapper-refund-sante .pagination .content-pagination'); // ancien site
+    }
+
+    function injectButton(allowFallback) {
+        const host = findHost();
+        const existing = document.getElementById('ipeca-export-box');
+
+        if (existing) {
+            // Si le bloc était flottant et que la barre de pagination est apparue : on le déplace
+            if (host && existing.dataset.floating === '1') {
+                existing.dataset.floating = '0';
+                existing.style.cssText = BOX_STYLE + 'margin-left:16px;';
+                host.appendChild(existing);
+            }
+            return;
+        }
+        if (!host && !allowFallback) return;
+
+        const box = document.createElement('span');
+        box.id = 'ipeca-export-box';
 
         const btn = document.createElement('button');
         btn.id = 'ipeca-export-btn';
+        btn.type = 'button';
         btn.textContent = '⬇ Exporter vers Excel';
-        btn.style.cssText = `
-            margin-left: 16px; padding: 6px 14px;
-            background: #1F4E79; color: white; border: none;
-            border-radius: 4px; cursor: pointer;
-            font-size: 13px; font-family: Arial, sans-serif; vertical-align: middle;
-        `;
+        btn.style.cssText = BTN_STYLE;
         btn.addEventListener('mouseenter', () => btn.style.background = '#2E75B6');
         btn.addEventListener('mouseleave', () => btn.style.background = '#1F4E79');
         btn.addEventListener('click', exportToExcel);
-        pagination.querySelector('.content-pagination').appendChild(btn);
+
+        box.appendChild(btn);
+
+        if (host) {
+            box.style.cssText = BOX_STYLE + 'margin-left:16px;';
+            box.dataset.floating = '0';
+            host.appendChild(box);
+        } else {
+            box.style.cssText = BOX_STYLE + 'position:fixed;top:120px;right:20px;z-index:99999;background:#fff;padding:6px 8px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.25);';
+            box.dataset.floating = '1';
+            document.body.appendChild(box);
+            if (DEBUG) console.warn('[IPECA Export] Pagination introuvable : bloc flottant utilisé');
+        }
+        if (DEBUG) console.log('[IPECA Export] Bouton injecté');
     }
 
-    // ── Extraction des données ───────────────────────────────────────────────
-    function extractData() {
+    // ── Extraction (ancien site) ───────────────────────────────────────────────
+    function extractDataLegacy() {
         const rows = [];
         const mainTable = document.querySelector('.wrapper-refund-sante table.ipeca-table');
         if (!mainTable) return rows;
@@ -123,6 +197,114 @@
             });
         });
         return rows;
+    }
+
+    // ── Extraction (nouveau site Angular : /ng/client/mes-remboursements) ────
+    function extractDataNg() {
+        const rows = [];
+        const table = document.querySelector('app-reimbursement-data-table table');
+        if (!table) return rows;
+
+        const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+        const strip = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+        const parseAmount = (str) =>
+            parseFloat((str || '').replace(/\s/g, '').replace('€', '').replace(',', '.')) || 0;
+
+        const MOIS = {
+            'JANVIER': '01', 'FEVRIER': '02', 'MARS': '03', 'AVRIL': '04',
+            'MAI': '05', 'JUIN': '06', 'JUILLET': '07', 'AOUT': '08',
+            'SEPTEMBRE': '09', 'OCTOBRE': '10', 'NOVEMBRE': '11', 'DECEMBRE': '12',
+        };
+        const cellText = (tr, col) => {
+            const td = tr.querySelector('td.cdk-column-' + col);
+            return td ? clean(td.textContent) : '';
+        };
+
+        let currentMonth = '', year = '', monthNum = '00';
+        let pending = null; // ligne résumé en attente de son bloc de détail
+
+        const flushPending = () => {
+            if (!pending) return;
+            // Pas de détail disponible : ligne agrégée de secours
+            rows.push({
+                mois: currentMonth, dateRemb: pending.dateRemb, destinataire: pending.destinataire,
+                beneficiaire: '', dateSoin: '', nature: '',
+                fraisReels: pending.frais, rembSS: 0, partOblig: 0,
+                ipeca: pending.ipeca, reste: pending.reste, regularisation: pending.frais < 0,
+            });
+            pending = null;
+        };
+
+        Array.from(table.querySelectorAll('tbody > tr')).forEach(tr => {
+            // ── Titre de mois ("NOVEMBRE 2026") ────────────────────────────
+            if (tr.classList.contains('group-row')) {
+                flushPending();
+                currentMonth = clean(tr.textContent);
+                year = (currentMonth.match(/\d{4}/) || [''])[0];
+                const word = (strip(currentMonth).match(/^[A-Z]+/) || [''])[0];
+                monthNum = MOIS[word] || '00';
+                return;
+            }
+
+            // ── Ligne de remboursement ─────────────────────────────────────
+            if (tr.classList.contains('data-row')) {
+                flushPending();
+                const day = (cellText(tr, 'truncatDateDeRemboursement').match(/^(\d{1,2})/) || [])[1] || '00';
+                pending = {
+                    dateRemb: year ? `${year}-${monthNum}-${day.padStart(2, '0')}` : cellText(tr, 'truncatDateDeRemboursement'),
+                    destinataire: cellText(tr, 'libelle'),
+                    frais: parseAmount(cellText(tr, 'depense')),
+                    ipeca: parseAmount(cellText(tr, 'montantVerseIpeca')),
+                    reste: parseAmount(cellText(tr, 'rac')),
+                };
+                return;
+            }
+
+            // ── Ligne de détail (toujours dans le DOM, même repliée) ───────
+            if (tr.classList.contains('example-detail-row')) {
+                if (!pending) return; // détail vide sous un titre de mois
+                const host = tr.querySelector('lib-my-refunds-table-details');
+                let benef = '', dateSoin = '', count = 0;
+
+                if (host) {
+                    Array.from(host.children).forEach(el => {
+                        if (el.classList.contains('title-detail-content')) {
+                            const t = clean(el.textContent); // "Soin du 03/11/2026 pour LEIRE"
+                            dateSoin = (t.match(/Soin du (\d{2}\/\d{2}\/\d{4})/) || [])[1] || '';
+                            benef    = (t.match(/pour\s+(.+)$/) || [])[1] || '';
+                            return;
+                        }
+                        el.querySelectorAll('.detail-content').forEach(dc => {
+                            const sp = Array.from(dc.children);
+                            if (sp.length < 6) return;
+                            const frais = parseAmount(sp[1].textContent);
+                            rows.push({
+                                mois: currentMonth, dateRemb: pending.dateRemb,
+                                destinataire: pending.destinataire,
+                                beneficiaire: benef, dateSoin,
+                                nature: clean(sp[0].textContent.replace(/€/g, '')),
+                                fraisReels: frais,
+                                rembSS: parseAmount(sp[2].textContent),
+                                partOblig: parseAmount(sp[3].textContent),
+                                ipeca: parseAmount(sp[4].textContent),
+                                reste: parseAmount(sp[5].textContent),
+                                regularisation: frais < 0,
+                            });
+                            count++;
+                        });
+                    });
+                }
+                if (count > 0) pending = null; else flushPending();
+            }
+        });
+        flushPending();
+        return rows;
+    }
+
+    function extractData() {
+        return document.querySelector('app-reimbursement-data-table table')
+            ? extractDataNg()
+            : extractDataLegacy();
     }
 
     // ── Générateur XLSX natif (pas de dépendance CDN) ───────────────────────
@@ -481,12 +663,16 @@
         URL.revokeObjectURL(url);
     }
 
+    W.__ipecaExtractData = extractData; // utilisable depuis la console : __ipecaExtractData()
+
     // ── Lancement ────────────────────────────────────────────────────────────
-    const observer = new MutationObserver(() => {
-        if (document.querySelector('.wrapper-refund-sante .pagination')) injectButton();
-    });
+    const observer = new MutationObserver(() => injectButton(false));
     observer.observe(document.body, { childList: true, subtree: true });
-    if (document.readyState === 'complete') injectButton();
-    else window.addEventListener('load', injectButton);
+    injectButton(false);
+    window.addEventListener('load', () => {
+        injectButton(false);
+        // Si rien n'a pu être injecté après 2 s, on utilise le bouton flottant
+        setTimeout(() => injectButton(true), 2000);
+    });
 
 })();
